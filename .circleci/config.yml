@@ -5,9 +5,14 @@ executors:
      docker:
       - image: cimg/node:15.6.0
     # resource_class: large
+  
+  ansible:
+    docker:
+      - image: cimg/python:3.9.6
 
 orbs:
   heroku: circleci/heroku@1.2.6
+  terraform: circleci/terraform@2.1.0
 
 #orchestrate jobs: define dependencies, run order, and approval 
 workflows:
@@ -15,12 +20,20 @@ workflows:
   build-test-deploy:
     jobs:
       - build
+      - deploy-runner-via-terraform:
+          name: "Deploy Server Instance"
+          requires:
+            - build
+      - install-runner-via-ansible:
+          name: "Install and Configure Runner" 
+          requires: 
+            - "Deploy Server Instance"
       - lint:
           requires:
-            - build
+            - "Install and Configure Runner"
       - test:
           requires:
-            - build
+            - "Install and Configure Runner"
       - hold:
           type: approval
           requires:
@@ -56,7 +69,69 @@ commands:
       - save_cache:
           paths:
             - ./node_modules
-          key: dependency-cache-v1-{{ .Branch }}-{{ checksum "package-lock.json" }}  
+          key: dependency-cache-v1-{{ .Branch }}-{{ checksum "package-lock.json" }}
+  
+  install-ansible:
+    description: "Install Ansible via Pip"
+    parameters:
+      version:
+        type: string
+        default: "2.9.24"        
+    steps:
+      - run:
+          name: Installing Ansible via Pip
+          command: |
+            export PIP=$(which pip pip3 | head -1)
+            if [[ -n $PIP ]]; then
+              if which sudo > /dev/null; then
+                if [ -n "<<parameters.version>>" ]; then
+                  sudo $PIP install ansible==<<parameters.version>> --upgrade
+                else
+                  sudo $PIP install ansible --upgrade
+                fi
+              else
+                if [ -n "<<parameters.version>>" ]; then
+                  $PIP install ansible==<<parameters.version>> --upgrade --user
+                else
+                  $PIP install ansible --upgrade --user
+                fi
+              fi
+            else
+              echo "Unable to install Ansible. Please install pip."
+              exit 1
+            fi
+  
+  install-additional-packages:
+    description: "Installing additional Packages for Ansible"
+    steps:
+      - run:
+          name: Install boto3 & botocore
+          command: |
+            export PIP=$(which pip pip3 | head -1)
+            if [[ -n $PIP ]]; then
+              if which sudo > /dev/null; then
+                sudo $PIP install boto3 botocore --upgrade
+              else
+                $PIP install boto3 botocore --upgrade --user
+              fi
+            else
+              echo "Unable to install boto3 & botocore. Please install pip."
+              exit 1
+            fi
+      - run:
+          name: Install amazon.aws
+          command: ansible-galaxy collection install amazon.aws
+      - run:
+          name: Install community.general
+          command: ansible-galaxy collection install community.general
+
+  install-runner:
+    description: "Install Runner via Ansible"
+    steps:
+      - run:
+          name: Run Ansible Playbook
+          command: ansible-playbook -i aws_ec2.yml -vv runner.yml -u ansible -e "RESOURCE_CLASS_CREATION=false NAMESPACE=crowley-namespace ORG_NAME=james-crowley RESOURCE_CLASS=runner-demo API_TOKEN=$API_TOKEN target_hosts=$(cat output.txt)"
+
 # builing blocks of ci/cd
 jobs:
   build:
@@ -67,8 +142,8 @@ jobs:
       #     docker_layer_caching: true
       - installnode
   lint: 
-    executor: my-executor
-    resource_class: small
+    machine: true
+    resource_class: crowley-namespace/runner-demo
     steps:
       - installnode
       - run:
@@ -76,8 +151,8 @@ jobs:
           command: npm run lint
   test: 
     parallelism: 4
-    executor: my-executor
-    resource_class: large
+    machine: true
+    resource_class: crowley-namespace/runner-demo
     steps:
       - installnode 
       - run: mkdir ~/junit
@@ -92,6 +167,47 @@ jobs:
           path: ~/junit
       - store_artifacts:
           path: ~/junit
+  
+  deploy-runner-via-terraform:
+    executor: terraform/default
+    steps:
+      - checkout
+      - terraform/init:
+          path: terraform/
+      - terraform/apply:
+          path: terraform/
+          var_file: demo.tfvars
+      - run:
+          name: Write out Public IP value to output.txt
+          command: echo "$(terraform output public_ip)" > output.txt
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+
+  install-runner-via-ansible:
+    executor: ansible
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - add_ssh_keys:
+          fingerprints:
+            - "dd:8f:af:18:32:a1:c9:b7:86:ca:73:a1:1e:77:db:87"
+      - install-ansible:
+          version: "2.9.24"
+      - install-additional-packages
+      - install-runner
+
+  destroy-runner-via-terraform:
+    executor: terraform/default
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - terraform/destroy:
+          path: terraform/
+          var_file: demo.tfvars
   
 
 
