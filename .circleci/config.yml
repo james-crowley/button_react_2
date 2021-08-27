@@ -55,9 +55,6 @@ commands:
     description: "Install and cache node"
     steps:
       - checkout
-      - run:
-          name: Install Rsync
-          command: sudo apt-get update -y && sudo apt-get install rsync -y
       - run: 
           name: Node Version
           command: node --version
@@ -155,6 +152,9 @@ jobs:
     # DLC does nothing here, its caching depends on commonality of the image layers.
       # - setup_remote_docker:
       #     docker_layer_caching: true
+      - run:
+          name: Install Rsync
+          command: sudo apt-get update -y && sudo apt-get install rsync -y
       - installnode
   lint: 
     machine: true
