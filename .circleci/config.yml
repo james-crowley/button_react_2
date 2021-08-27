@@ -68,13 +68,13 @@ commands:
             - dependency-cache-v1-
       - run:
           name: Move /tmp/node_modules to ./node_modules
-          command: mv /tmp/node_modules/* ./node_modules/
+          command: rsync -av /tmp/node_modules/ ./node_modules/
       - run: 
           name: NPM Install
           command: npm install --legacy-peer-deps
       - run:
           name: ./node_modules to /tmp/node_modules
-          command: mv ./node_modules/* /tmp/node_modules/
+          command: rm -rf /tmp/node_modules/* && mv ./node_modules/* /tmp/node_modules/
       - save_cache:
           paths:
             - /tmp/node_modules/

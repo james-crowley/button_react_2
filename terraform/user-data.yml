@@ -8,3 +8,4 @@ packages:
   - python3
   - nodejs
   - npm
+  - rsync
